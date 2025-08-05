@@ -1,105 +1,94 @@
 import os
-import json
-import time
-import re
 import ast
-import requests
+import json
+import re
+import time
+import asyncio
 from bs4 import BeautifulSoup
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
-
+from temp_mails import Tenminemail_com
 from pyrogram import Client
-from pyrogram.methods.utilities.idle import idle
+from concurrent.futures import ThreadPoolExecutor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+import requests
+from datetime import datetime, timedelta
 
+# Load env variables
 API_ID = int(os.environ["api_id"])
 API_HASH = os.environ["api_hash"]
 BOT_TOKEN = os.environ["bot_token"]
 CHAT_IDS = ast.literal_eval(os.environ["chat_ids"])
 ALL_URLS = ast.literal_eval(os.environ["all_urls"])
-ACCOUNT_PASSWORD =os.environ["acc_pass"]
 
+# Pyrogram bot client
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-async def send_all(text):
+executor = ThreadPoolExecutor(max_workers=5)
+scheduler = AsyncIOScheduler()
+
+async def send_to_all(message: str):
     for chat_id in CHAT_IDS:
-        await app.send_message(chat_id=chat_id, text=text)
+        try:
+            await app.send_message(chat_id, message)
+        except Exception as e:
+            print(f"Failed to send to {chat_id}: {e}")
 
 def create_account_sync():
-    s = requests.Session()
-    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"})
     try:
-        r = s.post(ALL_URLS[0])
-        if r.status_code != 200 or "mailbox" not in r.json():
-            return "[❌] Failed to get temp mail."
-        j = r.json()
-        token, email = j["token"], j["mailbox"]
+        mail = Tenminemail_com()
+        email = mail.email
 
-        s.get(ALL_URLS[1])
-        s.get(ALL_URLS[2])
-        s.get(ALL_URLS[3])
-        csrf = s.cookies.get("req_identity")
-
+        s = requests.Session()
         s.headers.update({
-            "x-csrf-token": csrf,
-            "accept-language": "en-US,en;q=0.9",
-            "x-lang": "en-us",
-            "Content-Type": "application/json"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
         })
 
-        start_time = datetime.now()
+        # Step 1–3: Open invite and login pages, fetch CSRF
+        s.get(ALL_URLS[0])
+        s.get(ALL_URLS[1])
+        s.get(ALL_URLS[2])
+        csrf_token = s.cookies.get("req_identity")
+        s.headers.update({
+            "x-csrf-token": csrf_token,
+            "accept-language": "en-US,en;q=0.9",
+            "x-lang": "en-us"
+        })
 
-        while True:
-            r = s.post(ALL_URLS[4], data=json.dumps({
-                "captcha_type": 2,
-                "email": email,
-                "source": 3,
-                "product_id": 14792
-            }))
-            try:
-                j = r.json()
-            except:
-                return f"[{email}] ❌ Error parsing response."
-            if j.get("msg") != "limit ip":
-                break
-            time.sleep(5)
+        # Step 4: Send OTP
+        res = s.post(ALL_URLS[3], data=json.dumps({
+            "captcha_type": 2,
+            "email": email,
+            "source": 3,
+            "product_id": 14792
+        }))
+        if res.json().get("code") == 231005:
+            return f"[{email}] - ❌ Blocked"
 
-        delta = datetime.now() - start_time
+        # Step 5: Wait for OTP
+        data = mail.wait_for_new_email(delay=1.0, timeout=120)
+        if not data:
+            return f"[{email}] - ❌ No OTP received"
 
-        headersmail = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-            "authorization": "Bearer " + token
-        }
-
-        for _ in range(60):
-            r = s.get(ALL_URLS[5], headers=headersmail)
-            if r.json().get("messages"):
-                break
-            time.sleep(1)
-        else:
-            return f"[{email}] ❌ Timeout waiting for OTP email."
-
-        msg_id = r.json()["messages"][0]["_id"]
-        r = s.get(f"{ALL_URLS[6]}/{msg_id}", headers=headersmail)
-        soup = BeautifulSoup(r.json()["bodyHtml"], "html.parser")
+        content = mail.get_mail_content(data["id"])
+        soup = BeautifulSoup(content, "html.parser")
         otp_match = re.search(r"\b\d{6}\b", soup.get_text())
-
         if not otp_match:
-            return f"[{email}] ❌ OTP not found in email."
+            return f"[{email}] - ❌ OTP not found"
 
         otp = otp_match.group()
-        s.post(ALL_URLS[7], data=json.dumps({
+
+        # Step 6: Validate OTP
+        s.post(ALL_URLS[4], data=json.dumps({
             "captcha": otp,
             "captcha_type": 2,
             "email": email
         }))
 
-        s.post(ALL_URLS[8], data=json.dumps({
+        # Step 7: Register
+        s.post(ALL_URLS[5], data=json.dumps({
             "account_type": 2,
             "email": email,
-            "password": ACCOUNT_PASSWORD,
+            "password": "Joker@123",
             "region_type": 1,
             "register_type": 12,
             "lang": "en-US",
@@ -112,40 +101,45 @@ def create_account_sync():
             "extra": "eyJzaGFyZV9jb2RlIjoiMjhVWXJ5bVpoV20iLCJyZWZlcnJhbF9pZCI6IjQ2NSJ9"
         }))
 
-        check = s.get(ALL_URLS[9])
+        # Save account
         with open("accounts.txt", "a") as f:
-            f.write(f"{email} : {ACCOUNT_PASSWORD}\n")
+            f.write(f"{email} : Joker@123\n")
 
-        return f"[{email}] 🎉 Account created.\nLogin Check: {check.status_code} | {check.json()}"
-
+        return f"[{email}] - ✅ Account created"
     except Exception as e:
-        return f"[{email}] ❌ Exception: {str(e)}"
-    finally:
-        s.close()
+        return f"❌ Error: {str(e)}"
 
 async def run_accounts():
     loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = await loop.run_in_executor(None, lambda: [create_account_sync() for _ in range(5)])
-    for result in results:
-        await send_all(result)
-
-def schedule_jobs():
-    for h in range(24):
-        scheduler.add_job(run_accounts, CronTrigger(hour=h, second=(5 + 5 * h) % 60))
+    futures = [loop.run_in_executor(executor, create_account_sync) for _ in range(5)]
+    results = await asyncio.gather(*futures)
+    for res in results:
+        await send_to_all(res)
 
 def setup_jobs():
-    for h in range(24):
-        scheduler.add_job(run_accounts, CronTrigger(hour=h, second=(5 + 5 * h) % 60))
+    now = datetime.now()
+    start_offset = 5  # first run after 5 seconds
+    interval = timedelta(hours=1, seconds=10)
+
+    for i in range(24):
+        offset = timedelta(seconds=start_offset) + i * interval
+        scheduler.add_job(
+            run_accounts,
+            trigger=IntervalTrigger(start_date=now + offset, hours=1, seconds=10),
+            id=f"job_{i}"
+        )
 
 async def main():
     await app.start()
-    scheduler.start()
     setup_jobs()
-    await send_all("🤖 Bot started and account creation scheduled.")
-    await idle()
-    await app.stop()
+    await send_to_all("🤖 Scheduler started successfully!")
+    scheduler.start()
+
+    try:
+        while True:
+            await asyncio.sleep(60)
+    finally:
+        await app.stop()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
