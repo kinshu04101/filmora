@@ -1,0 +1,181 @@
+import os
+import re
+import ast
+import json
+import time
+import asyncio
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+
+from pyrogram import Client
+from pyrogram.methods.utilities.idle import idle
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# --- Load Environment Variables ---
+API_ID = int(os.environ["api_id"])
+API_HASH = os.environ["api_hash"]
+BOT_TOKEN = os.environ["bot_token"]
+CHAT_IDS = ast.literal_eval(os.environ["chat_ids"])
+ALL_URLS = ast.literal_eval(os.environ["all_urls"])
+ACCOUNT_PASSWORD =os.environ["acc_pass"]
+
+# --- Constants ---
+
+executor = ThreadPoolExecutor(max_workers=5)
+scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
+
+# --- Telegram App ---
+app = Client("account_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# --- Create Account Function ---
+def create_account_sync():
+    messages = []
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    })
+
+    try:
+        # Step 1: Temp Mail
+        resp_temp = s.post(ALL_URLS[0])  # https://web2.temp-mail.org/mailbox
+        if resp_temp.status_code != 200 or "mailbox" not in resp_temp.json():
+            return ["❌ Failed to get temp mail."]
+        data = resp_temp.json()
+        token, email = data["token"], data["mailbox"]
+        messages.append(f"[{email}] ✅ Got temporary email.")
+
+        # Step 2–4: Authorization
+        s.get(ALL_URLS[1])  # Filmora referral URL
+        s.get(ALL_URLS[2])  # Trigger login page
+        s.get(ALL_URLS[3])  # CSRF token
+        csrf_token = s.cookies.get("req_identity")
+        s.headers.update({
+            "x-csrf-token": csrf_token,
+            "accept-language": "en-US,en;q=0.9",
+            "x-lang": "en-us",
+            "Content-Type": "application/json"
+        })
+
+        # Step 5: Request OTP
+        messages.append(f"[{email}] 🚀 Requesting OTP...")
+        start_time = datetime.now()
+
+        while True:
+            res = s.post(ALL_URLS[4], data=json.dumps({
+                "captcha_type": 2,
+                "email": email,
+                "source": 3,
+                "product_id": 14792
+            }))
+            try:
+                res_data = res.json()
+            except Exception:
+                messages.append(f"[{email}] ❌ Error parsing response.")
+                return messages
+
+            if res_data.get("msg") != "limit ip":
+                messages.append(f"[{email}] ✅ OTP request successful.")
+                break
+            else:
+                messages.append(f"[{email}] ⏳ IP is rate limited. Retrying...")
+                time.sleep(5)
+
+        delta = datetime.now() - start_time
+        h, r = divmod(int(delta.total_seconds()), 3600)
+        m, s_ = divmod(r, 60)
+        messages.append(f"[{email}] ⏱️ IP allowed after {h}h:{m}min:{s_}sec")
+
+        # Step 6–7: Get OTP from email
+        headersmail = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+            "authorization": "Bearer " + token
+        }
+        messages.append(f"[{email}] 📥 Waiting for email...")
+        for _ in range(60):
+            mail_resp = s.get(ALL_URLS[5], headers=headersmail)
+            if mail_resp.json().get("messages"):
+                break
+            time.sleep(1)
+        else:
+            messages.append(f"[{email}] ❌ Timeout waiting for OTP email.")
+            return messages
+
+        message_id = mail_resp.json()["messages"][0]["_id"]
+        email_html = s.get(f"{ALL_URLS[6]}/{message_id}", headers=headersmail).json()["bodyHtml"]
+        otp_match = re.search(r"\b\d{6}\b", BeautifulSoup(email_html, "html.parser").get_text())
+        if not otp_match:
+            messages.append(f"[{email}] ❌ OTP not found.")
+            return messages
+        otp = otp_match.group()
+        messages.append(f"[{email}] 🔐 OTP Found: {otp}")
+
+        # Step 8–9: Validate OTP & Register
+        s.post(ALL_URLS[7], data=json.dumps({
+            "captcha": otp,
+            "captcha_type": 2,
+            "email": email
+        }))
+        messages.append(f"[{email}] ✅ OTP validated.")
+
+        s.post(ALL_URLS[8], data=json.dumps({
+            "account_type": 2,
+            "email": email,
+            "password": ACCOUNT_PASSWORD,
+            "region_type": 1,
+            "register_type": 12,
+            "lang": "en-US",
+            "product_id": 14792,
+            "from_web_site": "filmora.wondershare.com",
+            "reg_brand": 3,
+            "platform_id": None,
+            "industry": None,
+            "is_login": 1,
+            "extra": "eyJzaGFyZV9jb2RlIjoiMjhVWXJ5bVpoV20iLCJyZWZlcnJhbF9pZCI6IjQ2NSJ9"
+        }))
+        messages.append(f"[{email}] ✅ Account registered.")
+
+        # Step 10: Login Check
+        check = s.get(ALL_URLS[9])
+        messages.append(f"[{email}] 🧪 Login Check: {check.status_code} | {check.json()}")
+
+        # Save Account
+        with open("accounts.txt", "a") as f:
+            f.write(f"{email} : {ACCOUNT_PASSWORD}\n")
+        messages.append(f"[{email}] 🎉 Account created and saved.")
+
+    except Exception as e:
+        messages.append(f"[{email}] ❌ Exception: {e}")
+    finally:
+        s.close()
+    return messages
+
+
+# --- Async Wrapper to Send to Telegram ---
+async def create_and_notify():
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(executor, create_account_sync)
+    for chat_id in CHAT_IDS:
+        for line in result:
+            await app.send_message(chat_id=chat_id, text=line)
+            await asyncio.sleep(0.5)
+
+
+# --- Scheduler Setup ---
+def setup_jobs():
+    for hour in range(0, 24):
+        run_second = 5 + (hour * 5) % 60
+        run_minute = 0
+        scheduler.add_job(create_and_notify, "cron", hour=hour, minute=run_minute, second=run_second)
+
+# --- Main ---
+async def main():
+    await app.start()
+    setup_jobs()
+    scheduler.start()
+    await idle()
+    await app.stop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
