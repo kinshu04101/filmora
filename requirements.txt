@@ -1,0 +1,7 @@
+streamlit
+requests
+bs4
+streamlit_javascript
+pyrogram
+tgcrypto
+apscheduler==3.10.4
