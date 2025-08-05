@@ -6,3 +6,4 @@ pyrogram
 tgcrypto
 apscheduler==3.10.4
 temp-mails
+websocket-client
