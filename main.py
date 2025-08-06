@@ -2,18 +2,14 @@ import os
 import ast
 import json
 import re
-import time
 import asyncio
+from datetime import datetime
 from bs4 import BeautifulSoup
 from temp_mails import Tenminemail_com
 from pyrogram import Client
-from concurrent.futures import ThreadPoolExecutor
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 import requests
-from datetime import datetime, timedelta
 
-# Load env variables
+# Load environment variables
 API_ID = int(os.environ["api_id"])
 API_HASH = os.environ["api_hash"]
 BOT_TOKEN = os.environ["bot_token"]
@@ -23,9 +19,7 @@ ALL_URLS = ast.literal_eval(os.environ["all_urls"])
 # Pyrogram bot client
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-executor = ThreadPoolExecutor(max_workers=5)
-scheduler = AsyncIOScheduler()
-
+# Send result to all chat_ids
 async def send_to_all(message: str):
     for chat_id in CHAT_IDS:
         try:
@@ -33,17 +27,29 @@ async def send_to_all(message: str):
         except Exception as e:
             print(f"Failed to send to {chat_id}: {e}")
 
-def create_account_sync():
+# Main account creation function
+async def create_account_async():
     try:
-        mail = Tenminemail_com()
-        email = mail.email
+        for attempt in range(10):
+            try:
+                mail = Tenminemail_com()
+                email = mail.email
+                break
+            except Exception as e:
+                if "429" in str(e):
+                    print("❌ 429 Rate limit on email. Retrying in 60s...")
+                    await asyncio.sleep(60)
+                else:
+                    raise e
+        else:
+            return "❌ Error: Email creation failed after 10 retries"
 
         s = requests.Session()
         s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         })
 
-        # Step 1–3: Open invite and login pages, fetch CSRF
+        # Step 1-3: Visit initial pages
         s.get(ALL_URLS[0])
         s.get(ALL_URLS[1])
         s.get(ALL_URLS[2])
@@ -61,8 +67,9 @@ def create_account_sync():
             "source": 3,
             "product_id": 14792
         }))
+
         if res.json().get("code") == 231005:
-            return f"[{email}] - ❌ Blocked"
+            return f"BLOCKED|{email}"
 
         # Step 5: Wait for OTP
         data = mail.wait_for_new_email(delay=1.0, timeout=120)
@@ -109,35 +116,25 @@ def create_account_sync():
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
-async def run_accounts():
-    loop = asyncio.get_event_loop()
-    futures = [loop.run_in_executor(executor, create_account_sync) for _ in range(5)]
-    results = await asyncio.gather(*futures)
-    for res in results:
-        await send_to_all(res)
+# Main runner loop
+async def run_forever():
+    while True:
+        result = await create_account_async()
 
-def setup_jobs():
-    now = datetime.now()
-    start_offset = 5  # first run after 5 seconds
-    interval = timedelta(hours=1, seconds=10)
+        if result.startswith("BLOCKED|"):
+            email = result.split("|")[1]
+            await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
+            await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
+        else:
+            await send_to_all(result)
+            await asyncio.sleep(5)  # Wait 5 seconds before next run
 
-    for i in range(24):
-        offset = timedelta(seconds=start_offset) + i * interval
-        scheduler.add_job(
-            run_accounts,
-            trigger=IntervalTrigger(start_date=now + offset, hours=1, seconds=10),
-            id=f"job_{i}"
-        )
-
+# Main entry
 async def main():
     await app.start()
-    setup_jobs()
-    await send_to_all("🤖 Scheduler started successfully!")
-    scheduler.start()
-
+    await send_to_all("🤖 Bot started and running in loop...")
     try:
-        while True:
-            await asyncio.sleep(60)
+        await run_forever()
     finally:
         await app.stop()
 
