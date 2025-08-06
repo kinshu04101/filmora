@@ -15,7 +15,7 @@ API_HASH = os.environ["api_hash"]
 BOT_TOKEN = os.environ["bot_token"]
 CHAT_IDS = ast.literal_eval(os.environ["chat_ids"])
 ALL_URLS = ast.literal_eval(os.environ["all_urls"])
-
+EXTRA = os.environ["extra"]
 # Pyrogram bot client
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -105,7 +105,7 @@ async def create_account_async():
             "platform_id": None,
             "industry": None,
             "is_login": 1,
-            "extra": "eyJzaGFyZV9jb2RlIjoiMjhVWXJ5bVpoV20iLCJyZWZlcnJhbF9pZCI6IjQ2NSJ9"
+            "extra": EXTRA
         }))
 
         # Save account
