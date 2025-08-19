@@ -132,8 +132,8 @@ async def run_forever():
             s.cookies.update({"streamlit_session": token})
             resp = s.get(user)
             s.headers.update({"x-csrf-token": resp.headers["x-csrf-token"], 'Content-Type': "application/json"})
-            s.post(restart)
-            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code")
+            resp=s.post(restart)
+            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code is "+str(resp.status_code))
             await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
             
         else:
