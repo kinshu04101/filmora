@@ -126,20 +126,20 @@ async def run_forever():
 
         if result.startswith("BLOCKED|"):
             email = result.split("|")[1]
-            #await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
-            token = S_SESSIONS[1]
-            s = requests.Session()
-            s.cookies.update({"streamlit_session": token})
-            resp = s.get(user)
-            s.headers.update({"x-csrf-token": resp.headers["x-csrf-token"], 'Content-Type': "application/json"})
-            resp=s.post(restart)
-            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code is "+str(resp.status_code))
+            await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
+            #token = S_SESSIONS[1]
+#            s = requests.Session()
+#            s.cookies.update({"streamlit_session": token})
+#            resp = s.get(user)
+#            s.headers.update({"x-csrf-token": resp.headers["x-csrf-token"], 'Content-Type': "application/json"})
+#            resp=s.post(restart)
+#            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code is "+str(resp.status_code))
             await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
             
         else:
-            pass
-            #await send_to_all(result)
-            #await asyncio.sleep(5)  # Wait 5 seconds before next run
+            #pass
+            await send_to_all(result)
+            await asyncio.sleep(5)  # Wait 5 seconds before next run
 
 # Main entry
 async def main():
