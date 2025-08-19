@@ -137,8 +137,9 @@ async def run_forever():
             await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
             
         else:
-            await send_to_all(result)
-            await asyncio.sleep(5)  # Wait 5 seconds before next run
+            pass
+            #await send_to_all(result)
+            #await asyncio.sleep(5)  # Wait 5 seconds before next run
 
 # Main entry
 async def main():
