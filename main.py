@@ -18,6 +18,9 @@ ALL_URLS = ast.literal_eval(os.environ["all_urls"])
 EXTRA = os.environ["extra"]
 # Pyrogram bot client
 app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+restart = os.environ["restart"]
+user = os.environ["user"]
+S_SESSIONS = ast.literal_eval(os.environ["st_session"])
 
 # Send result to all chat_ids
 async def send_to_all(message: str):
@@ -123,8 +126,16 @@ async def run_forever():
 
         if result.startswith("BLOCKED|"):
             email = result.split("|")[1]
-            await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
-            await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
+            #await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
+            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code")
+            token = S_SESSIONS[1]
+            s = requests.Session()
+            s.cookies.update({"streamlit_session": token})
+            resp = s.get(user)
+            s.headers.update({"x-csrf-token": resp.headers["x-csrf-token"], 'Content-Type': "application/json"})
+            s.post(restart)
+            #await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
+            
         else:
             await send_to_all(result)
             await asyncio.sleep(5)  # Wait 5 seconds before next run
