@@ -127,14 +127,14 @@ async def run_forever():
         if result.startswith("BLOCKED|"):
             email = result.split("|")[1]
             #await send_to_all(f"[{email}] - ❌ Blocked. Sleeping 1h 5s before retry...")
-            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code")
             token = S_SESSIONS[1]
             s = requests.Session()
             s.cookies.update({"streamlit_session": token})
             resp = s.get(user)
             s.headers.update({"x-csrf-token": resp.headers["x-csrf-token"], 'Content-Type': "application/json"})
             s.post(restart)
-            #await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
+            await send_to_all(f"[{email}] - ❌ Blocked. Restarting Code")
+            await asyncio.sleep(3605)  # Wait 1 hour + 5 seconds
             
         else:
             await send_to_all(result)
